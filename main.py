@@ -1,3 +1,4 @@
+import random
 import time
 import uuid
 import requests
@@ -193,9 +194,10 @@ def robot():
         text = (f'Google - {Google} '
                 f'BOC - {BOC_data[4]}')
 
-        url = f'http://172.16.1.19:3000/send_private_msg?user_id=498791444&message={text}'
+        url = f'http://172.16.1.19:3000/send_group_msg?group_id=651936926&message={text}'
         requests.get(url)
-        time.sleep(3600 * 12)
+        hours = random.randint(12, 24)
+        time.sleep(3600 * hours)
 
 
 thread1 = threading.Thread(target=get_exchanger_rete_google)
