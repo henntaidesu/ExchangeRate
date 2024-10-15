@@ -1,4 +1,5 @@
 import random
+import sys
 import time
 import uuid
 import requests
@@ -6,6 +7,7 @@ from bs4 import BeautifulSoup
 import threading
 from datetime import datetime
 import pymysql
+import base64
 
 
 def now_time():
@@ -20,9 +22,8 @@ class DateBase:
         host = 'host'
         port = 3306
         user = 'user'
-        password = 'password'
-        data_base = 'data_base'
-        self.db = pymysql.connect(host=host, port=port, user=user, password=password, database=data_base)
+        password = 'password@'
+        self.db = pymysql.connect(host=host, port=port, user=user, password=password)
 
     def insert(self, sql):
         cursor = self.db.cursor()
@@ -117,22 +118,42 @@ def get_exchanger_rete_google():
 
 
 def BOC_exchange_rate():
+    import ddddocr
+    from lxml import html
+    ocr = ddddocr.DdddOcr()
     while True:
+        captcha_jsp = 'https://srh.bankofchina.com/search/whpj/CaptchaServlet.jsp'
+        response = requests.get(captcha_jsp)
+        token = response.headers.get('token')
+        captcha_code = response.text
+        base_code = f'data:image/png;base64,{captcha_code}'
+        image_data = base64.b64decode(captcha_code)
+        with open('captcha.png', 'wb') as file:
+            file.write(image_data)
+        with open('captcha.png', 'rb') as f:
+            img_bytes = f.read()
+        res = ocr.classification(img_bytes)
         headers = {
             "content-type": "application/x-www-form-urlencoded",
         }
         data = {
-            "pjname": "日元"  # 请求参数，传递“日元”
+            "pjname": "日元",  # 请求参数，传递“日元”
+            "captcha": res,
+            "token": token
+
         }
         url = 'https://srh.bankofchina.com/search/whpj/search_cn.jsp'
         response = requests.post(url, headers=headers, data=data)
+
         soup = BeautifulSoup(response.content, 'html.parser')
         elements = soup.find_all('div', class_='BOC_main publish')
+
         exchange_rate_list = []
         for element in elements:
             exchange_rate = element.get_text()
-            exchange_rate = exchange_rate.replace("\r", "").replace(' ','')
+            exchange_rate = exchange_rate.replace("\r", "").replace(' ','').replace('\t', '')
             exchange_rate_list.append(exchange_rate)
+
         lines = exchange_rate.split("\n")
         filtered_data = [item for item in lines if item]
         filtered_data.pop()
@@ -158,10 +179,11 @@ def BOC_exchange_rate():
         else:
             DB_release_time = ' '
         for information in filtered_data_list:
+            print(information)
             release_time = datetime.strptime(information[6], '%Y.%m.%d%H:%M:%S')
             if release_time == DB_release_time:
                 print(f'{now_time()} - BOC 未更新汇率')
-                time.sleep(3600 * 2)
+                time.sleep(1800)
                 break
             else:
                 sql = (f"INSERT INTO `ExchangeRate`.`BOC_Exchage_Rate` "
@@ -174,6 +196,7 @@ def BOC_exchange_rate():
 
 
 def robot():
+    return
     while True:
         sql = "SELECT * FROM `ExchangeRate`.`JP-CN` ORDER BY `date` DESC LIMIT 1"
         flag, Google_data = DateBase().select(sql)
