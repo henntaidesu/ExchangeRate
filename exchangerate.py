@@ -1,5 +1,5 @@
+import os
 import random
-import sys
 import time
 import uuid
 import requests
@@ -8,6 +8,32 @@ import threading
 from datetime import datetime
 import pymysql
 import base64
+import ddddocr
+import platform
+
+os_name = platform.system()
+print(os_name)
+
+JP_CN_table = '''CREATE TABLE `JP-CN` (
+  `ID` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `date` datetime(3) NOT NULL,
+  `exchange_rate` float NOT NULL,
+  `data_from` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  PRIMARY KEY (`date`) USING BTREE,
+  KEY `‌index` (`ID`,`date`,`exchange_rate`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;'''
+
+BOC_ExchangeRate_table = '''CREATE TABLE `BOC_ExchangeRate` (
+  `uuid` char(36) NOT NULL,
+  `currency_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `exchange_buy_price` float DEFAULT NULL,
+  `banknote_buy_price` float DEFAULT NULL,
+  `exchange_sell_price` float DEFAULT NULL,
+  `banknote_sell_price` float DEFAULT NULL,
+  `BOC_price` float DEFAULT NULL,
+  `release_time` datetime DEFAULT NULL,
+  PRIMARY KEY (`uuid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;'''
 
 
 def now_time():
@@ -19,10 +45,10 @@ def now_time():
 
 class DateBase:
     def __init__(self):
-        host = 'host'
+        host = '172.16.1.22'
         port = 3306
-        user = 'user'
-        password = 'password@'
+        user = 'makuro'
+        password = 'SRCak2244@'
         self.db = pymysql.connect(host=host, port=port, user=user, password=password)
 
     def insert(self, sql):
@@ -32,30 +58,18 @@ class DateBase:
         self.db.close()
 
     def update(self, sql):
-        try:
-            cursor = self.db.cursor()
-            cursor.execute(sql)
-            self.db.commit()
-            cursor.close()
-            return True
-        except Exception as e:
-            return False
-        finally:
-            if hasattr(self, 'db') and self.db:
-                self.db.close()
+        cursor = self.db.cursor()
+        cursor.execute(sql)
+        self.db.commit()
+        cursor.close()
+        return True
 
     def select(self, sql):
-        try:
-            cursor = self.db.cursor()
-            cursor.execute(sql)
-            result = cursor.fetchall()
-            cursor.close()
-            return True, result
-        # except Exception as e:
-        #     pass
-        finally:
-            if hasattr(self, 'db') and self.db:
-                self.db.close()
+        cursor = self.db.cursor()
+        cursor.execute(sql)
+        result = cursor.fetchall()
+        cursor.close()
+        return True, result
 
     def delete(self, sql):
         try:
@@ -65,8 +79,8 @@ class DateBase:
             cursor.close()
         except Exception as e:
             if "timed out" in str(e):
-                self.print_log.write_log("连接数据库超时", 'error')
-            self.print_log.write_log(sql)
+                print("连接数据库超时", 'error')
+            print(sql)
             self.db.rollback()  # 回滚事务，撤销删除操作
         finally:
             if hasattr(self, 'db') and self.db:
@@ -75,6 +89,8 @@ class DateBase:
 
 def get_exchanger_rete_google():
     while True:
+        exchange_rate = None
+        element = None
         # 目标网页URL
         url = 'https://www.google.com/finance/quote/JPY-CNY'
         # 获取网页内容
@@ -118,20 +134,25 @@ def get_exchanger_rete_google():
 
 
 def BOC_exchange_rate():
-    import ddddocr
-    from lxml import html
+    from pathlib import Path
     ocr = ddddocr.DdddOcr()
+    img_path = None
+    if os_name == 'Windows':
+        img_path = f'C:\\Users\\{os.getlogin()}\\AppData\\Local\\Temp\\boc_captcha.png'
+        print(img_path)
     while True:
+        exchange_rate = None
         captcha_jsp = 'https://srh.bankofchina.com/search/whpj/CaptchaServlet.jsp'
         response = requests.get(captcha_jsp)
         token = response.headers.get('token')
         captcha_code = response.text
-        base_code = f'data:image/png;base64,{captcha_code}'
         image_data = base64.b64decode(captcha_code)
-        with open('captcha.png', 'wb') as file:
+        with open(img_path, 'wb') as file:
             file.write(image_data)
-        with open('captcha.png', 'rb') as f:
+        with open(img_path, 'rb') as f:
             img_bytes = f.read()
+
+        Path(img_path).unlink()
         res = ocr.classification(img_bytes)
         headers = {
             "content-type": "application/x-www-form-urlencoded",
@@ -151,7 +172,7 @@ def BOC_exchange_rate():
         exchange_rate_list = []
         for element in elements:
             exchange_rate = element.get_text()
-            exchange_rate = exchange_rate.replace("\r", "").replace(' ','').replace('\t', '')
+            exchange_rate = exchange_rate.replace("\r", "").replace(' ', '').replace('\t', '')
             exchange_rate_list.append(exchange_rate)
 
         lines = exchange_rate.split("\n")
@@ -172,21 +193,21 @@ def BOC_exchange_rate():
             ])
         filtered_data_list.pop(0)
 
-        sql = f'SELECT * FROM `ExchangeRate`.`BOC_Exchage_Rate` ORDER BY `release_time` DESC LIMIT 1'
+        sql = f'SELECT * FROM `ExchangeRate`.`BOC_ExchangeRate` ORDER BY `release_time` DESC LIMIT 1'
         flag, data = DateBase().select(sql)
         if data:
             DB_release_time = data[0][7]
         else:
             DB_release_time = ' '
         for information in filtered_data_list:
-            print(information)
+            # print(information)
             release_time = datetime.strptime(information[6], '%Y.%m.%d%H:%M:%S')
             if release_time == DB_release_time:
                 print(f'{now_time()} - BOC 未更新汇率')
                 time.sleep(1800)
                 break
             else:
-                sql = (f"INSERT INTO `ExchangeRate`.`BOC_Exchage_Rate` "
+                sql = (f"INSERT INTO `ExchangeRate`.`BOC_ExchangeRate` "
                        f"(`uuid`, `currency_name`, `exchange_buy_price`, `banknote_buy_price`, `exchange_sell_price`,"
                        f" `banknote_sell_price`, `BOC_price`, `release_time`) VALUES"
                        f" ('{uuid.uuid4()}', 'JPY', {float(information[1])}, {float(information[2])}, "
@@ -202,7 +223,7 @@ def robot():
         flag, Google_data = DateBase().select(sql)
         Google = Google_data[0][2]
 
-        sql = f'SELECT * FROM `ExchangeRate`.`BOC_Exchage_Rate` ORDER BY `release_time` DESC LIMIT 1'
+        sql = f'SELECT * FROM `ExchangeRate`.`BOC_ExchangeRate` ORDER BY `release_time` DESC LIMIT 1'
         flag, BOC_data = DateBase().select(sql)
         BOC_data = BOC_data[0]
         # text = (f'当前Google汇率  {Google} '
@@ -230,5 +251,3 @@ thread3 = threading.Thread(target=BOC_exchange_rate)
 thread1.start()
 thread2.start()
 thread3.start()
-
-
